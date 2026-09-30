@@ -6,8 +6,8 @@ RED='\033[1;31m'
 RESET='\033[0m'
 
 banner() {
-  printf '%b\n' "\${BLUE}S I F T\${RESET}"
-  printf '%b\n' "\${RED}WASMGC HTML CLIENT BUILDER\${RESET}"
+  printf '%b\n' "${BLUE}S I F T${RESET}"
+  printf '%b\n' "${RED}WASMGC HTML CLIENT BUILDER${RESET}"
   echo
 }
 
@@ -16,17 +16,25 @@ usage() {
 }
 
 [[ $# -eq 1 ]] || { usage; exit 2; }
-INPUT=$1
-[[ -f "$INPUT" ]] || { echo "Error: HTML file not found: $INPUT" >&2; exit 1; }
 
-case "\${INPUT##*.}" in
+INPUT=$1
+[[ -f "$INPUT" ]] || {
+  echo "Error: HTML file not found: $INPUT" >&2
+  exit 1
+}
+
+case "${INPUT##*.}" in
   html|htm|HTML|HTM) ;;
-  *) echo "Error: input must be an HTML file." >&2; exit 1 ;;
+  *)
+    echo "Error: input must be an HTML file." >&2
+    exit 1
+    ;;
 esac
 
 ROOT="$(cd "$(dirname "$INPUT")" && pwd)"
 INPUT="$ROOT/$(basename "$INPUT")"
 NAME="$(basename "$INPUT")"
+
 WORK="$ROOT/.sift"
 ASSETS="$WORK/assets"
 WASM="$WORK/wasm"
@@ -40,52 +48,75 @@ rm -rf "$WORK"
 mkdir -p "$ASSETS" "$WASM" "$MODULES"
 
 python3 - "$INPUT" "$ASSETS" "$WASM" <<'PY'
-import base64, html.parser, os, re, shutil, sys
-from urllib.parse import urlparse, unquote
+import base64
+import html.parser
+import os
+import re
+import shutil
+import sys
+from urllib.parse import unquote, urlparse
 
 source, assets, wasm_dir = sys.argv[1:4]
 base = os.path.dirname(source)
-text = open(source, encoding="utf-8", errors="replace").read()
+
+with open(source, encoding="utf-8", errors="replace") as handle:
+    text = handle.read()
+
 
 class Parser(html.parser.HTMLParser):
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
         refs = []
+
         if tag == "script" and attrs.get("src"):
             refs.append(attrs["src"])
+
         if tag == "link" and attrs.get("href"):
             refs.append(attrs["href"])
+
         if tag in {"img", "audio", "video", "source"} and attrs.get("src"):
             refs.append(attrs["src"])
 
         for ref in refs:
             parsed = urlparse(ref)
+
             if parsed.scheme or parsed.netloc or ref.startswith(("data:", "#")):
                 continue
-            path = os.path.normpath(os.path.join(base, unquote(parsed.path)))
+
+            path = os.path.normpath(
+                os.path.join(base, unquote(parsed.path))
+            )
+
             if not os.path.isfile(path):
                 continue
+
             name = os.path.basename(path)
-            dest = os.path.join(assets, name)
-            shutil.copy2(path, dest)
+            shutil.copy2(path, os.path.join(assets, name))
             print("  asset: " + name)
+
             if name.lower().endswith(".wasm"):
                 shutil.copy2(path, os.path.join(wasm_dir, name))
                 print("  wasm:  " + name)
 
+
 Parser().feed(text)
 
 # Detect inline base64 WASM data URLs without executing them.
-matches = re.findall(r'data:application/(?:wasm|wasm\+binary);base64,([A-Za-z0-9+/=]+)', text, re.I)
-for i, encoded in enumerate(matches, 1):
+pattern = (
+    r"data:application/(?:wasm|wasm\+binary);base64,"
+    r"([A-Za-z0-9+/=]+)"
+)
+
+for index, encoded in enumerate(re.findall(pattern, text, re.I), 1):
     try:
         data = base64.b64decode(encoded, validate=True)
     except Exception:
         continue
-    if data[:4] == b'\\x00asm':
-        name = f"inline-{i}.wasm"
-        with open(os.path.join(wasm_dir, name), "wb") as f:
-            f.write(data)
+
+    if data[:4] == b"\x00asm":
+        name = f"inline-{index}.wasm"
+        with open(os.path.join(wasm_dir, name), "wb") as handle:
+            handle.write(data)
         print("  inline WASM: " + name)
 PY
 
@@ -93,14 +124,17 @@ WASM_COUNT=$(find "$WASM" -type f -name '*.wasm' | wc -l | tr -d ' ')
 
 if [[ "$WASM_COUNT" -gt 0 ]]; then
   printf '%bWASM modules found:%b %s\n' "$BLUE" "$RESET" "$WASM_COUNT"
+
   if command -v wasm-tools >/dev/null 2>&1; then
     for file in "$WASM"/*.wasm; do
       echo "  checking $(basename "$file")"
-      wasm-tools validate "$file" >/dev/null 2>&1 || \
+
+      if wasm-tools validate "$file" >/dev/null 2>&1; then
+        echo "  valid:   $(basename "$file")"
+      else
         echo "  warning: validation failed for $(basename "$file")"
+      fi
     done
-  elif command -v wasm-objdump >/dev/null 2>&1; then
-    echo "  wasm-objdump detected; use it to inspect module sections."
   else
     echo "  note: install wasm-tools for local WASM validation."
   fi
@@ -114,32 +148,50 @@ if compgen -G "$MODULES/*.js" > /dev/null; then
 fi
 
 python3 - "$INPUT" "$WORK" "$OUTPUT" <<'PY'
-import html, os, sys
+import html
+import os
+import sys
 
 source, work, output = sys.argv[1:4]
-text = open(source, encoding="utf-8", errors="replace").read()
+
+with open(source, encoding="utf-8", errors="replace") as handle:
+    text = handle.read()
 
 module_dir = os.path.join(work, "modules")
 modules = []
+
 if os.path.isdir(module_dir):
     modules = sorted(
-        os.path.join(module_dir, f) for f in os.listdir(module_dir)
-        if f.endswith(".js") and os.path.isfile(os.path.join(module_dir, f))
+        os.path.join(module_dir, filename)
+        for filename in os.listdir(module_dir)
+        if filename.endswith(".js")
+        and os.path.isfile(os.path.join(module_dir, filename))
     )
 
 injection = ""
+
 for path in modules:
-    rel = os.path.relpath(path, os.path.dirname(output)).replace(os.sep, "/")
-    injection += '<script src="' + html.escape(rel, quote=True) + '"></script>\n'
+    relative = os.path.relpath(
+        path, os.path.dirname(output)
+    ).replace(os.sep, "/")
+
+    injection += (
+        '<script src="'
+        + html.escape(relative, quote=True)
+        + '"></script>\n'
+    )
 
 lower = text.lower()
-if injection and "</body>" in lower:
-    idx = lower.rfind("</body>")
-    text = text[:idx] + injection + text[idx:]
-elif injection:
-    text += injection
 
-open(output, "w", encoding="utf-8").write(text)
+if injection and "</body>" in lower:
+    index = lower.rfind("</body>")
+    text = text[:index] + injection + text[index:]
+elif injection:
+    text += "\n" + injection
+
+with open(output, "w", encoding="utf-8") as handle:
+    handle.write(text)
+
 print("Built: " + output)
 PY
 
