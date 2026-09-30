@@ -82,7 +82,7 @@
     accent?.addEventListener("input", e => document.documentElement.style.setProperty("--sift-accent", e.target.value));
     opacity?.addEventListener("input", e => document.documentElement.style.setProperty("--sift-opacity", Number(e.target.value) / 100));
 
-    if (window.SiftSettings) SiftSettings.load();
+    setTimeout(() => window.SiftSettings?.load(), 0);
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", build, { once: true });
